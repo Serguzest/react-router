@@ -2,6 +2,7 @@ import React from 'react'
 import warning from './routerWarning'
 import invariant from 'invariant'
 import { routerShape } from './PropTypes'
+import { component } from './InternalPropTypes'
 
 const { bool, object, string, func, oneOfType } = React.PropTypes
 
@@ -63,7 +64,8 @@ const Link = React.createClass({
     activeClassName: string,
     onlyActiveOnIndex: bool.isRequired,
     onClick: func,
-    target: string
+    target: string,
+    component
   },
 
   getDefaultProps() {
@@ -102,7 +104,7 @@ const Link = React.createClass({
   },
 
   render() {
-    const { to, query, hash, state, activeClassName, activeStyle, onlyActiveOnIndex, ...props } = this.props
+    const { to, query, hash, state, activeClassName, activeStyle, onlyActiveOnIndex, component, ...props } = this.props
     warning(
       !(query || hash || state),
       'the `query`, `hash`, and `state` props on `<Link>` are deprecated, use `<Link to={{ pathname, query, hash, state }}/>. http://tiny.cc/router-isActivedeprecated'
@@ -111,12 +113,17 @@ const Link = React.createClass({
     // Ignore if rendered outside the context of router, simplifies unit testing.
     const { router } = this.context
 
+    const Component = component || 'a'
+
     if (router) {
       // If user does not specify a `to` prop, return an empty anchor tag.
-      if (to == null) { return <a {...props} /> }
+      if (to == null) { return <Component {...props}/> }
 
       const location = createLocationDescriptor(to, { query, hash, state })
-      props.href = router.createHref(location)
+
+      if (Component == 'a'){
+        props.href = router.createHref(location)
+      }
 
       if (activeClassName || (activeStyle != null && !isEmptyObject(activeStyle))) {
         if (router.isActive(location, onlyActiveOnIndex)) {
@@ -134,7 +141,7 @@ const Link = React.createClass({
       }
     }
 
-    return <a {...props} onClick={this.handleClick} />
+    return <Component {...props} onClick={this.handleClick}/>
   }
 
 })
