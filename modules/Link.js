@@ -1,10 +1,9 @@
 import React from 'react'
-import warning from './routerWarning'
+import createReactClass from 'create-react-class'
+import { bool, object, string, func, oneOfType } from 'prop-types'
 import invariant from 'invariant'
 import { routerShape } from './PropTypes'
-import { component } from './InternalPropTypes'
-
-const { bool, object, string, func, oneOfType } = React.PropTypes
+import { ContextSubscriber } from './ContextUtils'
 
 function isLeftClickEvent(event) {
   return event.button === 0
@@ -23,12 +22,8 @@ function isEmptyObject(object) {
   return true
 }
 
-function createLocationDescriptor(to, { query, hash, state }) {
-  if (query || hash || state) {
-    return { pathname: to, query, hash, state }
-  }
-
-  return to
+function resolveToLocation(to, router) {
+  return typeof to === 'function' ? to(router.location) : to
 }
 
 /**
@@ -43,23 +38,18 @@ function createLocationDescriptor(to, { query, hash, state }) {
  * You could use the following component to link to that route:
  *
  *   <Link to={`/posts/${post.id}`} />
- *
- * Links may pass along location state and/or query string parameters
- * in the state/query props, respectively.
- *
- *   <Link ... query={{ show: true }} state={{ the: 'state' }} />
  */
-const Link = React.createClass({
+const Link = createReactClass({
+  displayName: 'Link',
+
+  mixins: [ ContextSubscriber('router') ],
 
   contextTypes: {
     router: routerShape
   },
 
   propTypes: {
-    to: oneOfType([ string, object ]),
-    query: object,
-    hash: string,
-    state: object,
+    to: oneOfType([ string, object, func ]),
     activeStyle: object,
     activeClassName: string,
     onlyActiveOnIndex: bool.isRequired,
@@ -82,8 +72,9 @@ const Link = React.createClass({
     if (event.defaultPrevented)
       return
 
+    const { router } = this.context
     invariant(
-      this.context.router,
+      router,
       '<Link>s rendered outside of a router context cannot navigate.'
     )
 
@@ -97,20 +88,13 @@ const Link = React.createClass({
 
     event.preventDefault()
 
-    const { to, query, hash, state } = this.props
-    const location = createLocationDescriptor(to, { query, hash, state })
-
-    this.context.router.push(location)
+    router.push(resolveToLocation(this.props.to, router))
   },
 
   render() {
-    const { to, query, hash, state, activeClassName, activeStyle, onlyActiveOnIndex, component, ...props } = this.props
-    warning(
-      !(query || hash || state),
-      'the `query`, `hash`, and `state` props on `<Link>` are deprecated, use `<Link to={{ pathname, query, hash, state }}/>. http://tiny.cc/router-isActivedeprecated'
-    )
+    const { to, activeClassName, activeStyle, onlyActiveOnIndex, component, ...props } = this.props
 
-    // Ignore if rendered outside the context of router, simplifies unit testing.
+    // Ignore if rendered outside the context of router to simplify unit testing.
     const { router } = this.context
 
     const Component = component || 'a'
@@ -126,7 +110,7 @@ const Link = React.createClass({
       }
 
       if (activeClassName || (activeStyle != null && !isEmptyObject(activeStyle))) {
-        if (router.isActive(location, onlyActiveOnIndex)) {
+        if (router.isActive(toLocation, onlyActiveOnIndex)) {
           if (activeClassName) {
             if (props.className) {
               props.className += ` ${activeClassName}`

@@ -5,6 +5,8 @@ import createHistory from '../createMemoryHistory'
 import { routerShape } from '../PropTypes'
 import execSteps from './execSteps'
 import Router from '../Router'
+import Route from '../Route'
+import match from '../match'
 
 describe('When a router enters a branch', function () {
   let
@@ -204,27 +206,43 @@ describe('When a router enters a branch', function () {
   it('calls the route leave hooks when leaving the route', function (done) {
     const history = createHistory('/news')
 
-    render(<Router history={history} routes={routes}/>, node, function () {
-      expect(newsLeaveHookSpy.calls.length).toEqual(0)
-      history.push('/inbox')
-      expect(newsLeaveHookSpy.calls.length).toEqual(1)
-      history.push('/news')
-      expect(newsLeaveHookSpy.calls.length).toEqual(1)
-      history.push('/inbox')
-      expect(newsLeaveHookSpy.calls.length).toEqual(2)
-      done()
-    })
+    const steps = [
+      () => {
+        expect(newsLeaveHookSpy.calls.length).toEqual(0)
+        history.push('/inbox')
+      },
+      () => {
+        expect(newsLeaveHookSpy.calls.length).toEqual(1)
+        history.push('/news')
+      },
+      () => {
+        expect(newsLeaveHookSpy.calls.length).toEqual(1)
+        history.push('/inbox')
+      },
+      () => {
+        expect(newsLeaveHookSpy.calls.length).toEqual(2)
+      }
+    ]
+
+    const execNextStep = execSteps(steps, done)
+
+    render(<Router history={history} routes={routes} onUpdate={execNextStep}/>, node)
   })
 
   it('does not call removed route leave hooks', function (done) {
     const history = createHistory('/news')
 
-    render(<Router history={history} routes={routes}/>, node, function () {
-      removeNewsLeaveHook()
-      history.push('/inbox')
-      expect(newsLeaveHookSpy).toNotHaveBeenCalled()
-      done()
-    })
+    const execNextStep = execSteps([
+      () => {
+        removeNewsLeaveHook()
+        history.push('/inbox')
+      },
+      () => {
+        expect(newsLeaveHookSpy).toNotHaveBeenCalled()
+      }
+    ], done)
+
+    render(<Router history={history} routes={routes} onUpdate={execNextStep}/>, node)
   })
 
   it('does not remove route leave hooks when changing params', function (done) {
@@ -374,5 +392,88 @@ describe('When a router enters a branch', function () {
       })
     })
   })
+})
 
+describe('Changing location', () => {
+  let node, onEnterSpy, onChangeSpy
+
+  const Text = text => () => <p>{text}</p>
+  const noop = () => {}
+
+  const onEnter = (state, replace, cb) => {
+    setTimeout(() => {
+      onEnterSpy()
+      replace('/bar')
+      cb()
+    })
+  }
+  const onChange = (prevState, nextState, replace, cb) => {
+    setTimeout(() => {
+      onChangeSpy()
+      replace('/bar')
+      cb()
+    })
+  }
+  const onEnterError = (state, replace, cb) => {
+    cb(new Error('transition error'))
+  }
+  const createRoutes = ({ enter, change }) => [
+    <Route path="/" onChange={change ? onChange : noop} component={Text('Home')}>
+      <Route path="child1" component={Text('Child1')} />
+      <Route path="child2" component={Text('Child2')} />
+    </Route>,
+    <Route path="/foo" onEnter={enter ? onEnter : noop} component={Text('Foo')} />,
+    <Route path="/bar" component={Text('Bar')} />,
+    <Route path="/error" onEnter={enter ? onEnterError : noop} component={Text('Error')}/>
+  ]
+
+  beforeEach(() => {
+    node = document.createElement('div')
+    onEnterSpy = expect.createSpy()
+    onChangeSpy = expect.createSpy()
+  })
+
+  it('cancels pending async onEnter hook', (done) => {
+    const history = createHistory('/')
+    const routes = createRoutes({ enter: true })
+
+    render(<Router history={history} routes={routes} />, node, () => {
+      history.push('/foo')
+      history.push('/')
+      expect(onEnterSpy.calls.length).toEqual(0)
+      setTimeout(() => {
+        expect(onEnterSpy.calls.length).toEqual(1)
+        expect(node.innerHTML).toContain('Home')
+        done()
+      })
+    })
+  })
+
+  it('cancels pending async onChange hook', (done) => {
+    const history = createHistory('/')
+    const routes = createRoutes({ change: true })
+
+    render(<Router history={history} routes={routes} />, node, () => {
+      history.push('/child1')
+      history.push('/bar')
+      expect(onChangeSpy.calls.length).toEqual(0)
+      setTimeout(() => {
+        expect(onChangeSpy.calls.length).toEqual(1)
+        expect(node.innerHTML).toContain('Bar')
+        done()
+      })
+    })
+  })
+
+  it('should pass error correctly', (done) => {
+    const routes = createRoutes({ enter: true })
+
+    match({ routes, location: '/error' }, (error, redirectLocation, renderProps) => {
+      expect(error).toExist()
+      expect(error.message).toEqual('transition error')
+      expect(redirectLocation).toNotExist()
+      expect(renderProps).toNotExist()
+      done()
+    })
+  })
 })

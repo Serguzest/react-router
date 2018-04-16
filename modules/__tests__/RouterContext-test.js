@@ -31,7 +31,7 @@ describe('RouterContext', () => {
       isActive: expect.createSpy().andReturn(isActiveSentinel)
     }
 
-    router = createRouterObject(history, transitionManager)
+    router = createRouterObject(history, transitionManager, {})
 
     class Component extends React.Component {
       constructor(props, ctx) {
@@ -57,14 +57,23 @@ describe('RouterContext', () => {
     })
   }
 
-  describe('2.0', () => {
-    it('exports only `router` to context')
-  })
-
   it('exports a `router` object to routing context', (done) => {
     renderTest(() => {
       expect(context.router).toExist()
       done()
+    })
+  })
+
+  it('injects a `router` object into props of route components', (done) => {
+    class RoutedComponent extends React.Component {
+      render() {
+        expect(this.props.router).toBeA(Object)
+        return null
+      }
+    }
+
+    match({ location: '/', routes: { path: '/', component: RoutedComponent } }, (err, redirect, renderProps) => {
+      render(<RouterContext {...renderProps} history={history} router={router}  />, node, done)
     })
   })
 

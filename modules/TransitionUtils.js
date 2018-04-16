@@ -1,111 +1,134 @@
 import { loopAsync } from './AsyncUtils'
-import warning from './routerWarning'
 
-function createTransitionHook(hook, route, asyncArity) {
-  return function (...args) {
-    hook.apply(route, args)
-
-    if (hook.length < asyncArity) {
-      let callback = args[args.length - 1]
-      // Assume hook executes synchronously and
-      // automatically call the callback.
-      callback()
-    }
-  }
+class PendingHooks {
+  hooks = []
+  add = hook => this.hooks.push(hook)
+  remove = hook => this.hooks = this.hooks.filter(h => h !== hook)
+  has = hook => this.hooks.indexOf(hook) !== -1
+  clear = () => this.hooks = []
 }
 
-function getEnterHooks(routes) {
-  return routes.reduce(function (hooks, route) {
-    if (route.onEnter)
-      hooks.push(createTransitionHook(route.onEnter, route, 3))
+export default function getTransitionUtils() {
+  const enterHooks = new PendingHooks()
+  const changeHooks = new PendingHooks()
 
-    return hooks
-  }, [])
-}
+  function createTransitionHook(hook, route, asyncArity, pendingHooks) {
+    const isSync = hook.length < asyncArity
 
-function getChangeHooks(routes) {
-  return routes.reduce(function (hooks, route) {
-    if (route.onChange)
-      hooks.push(createTransitionHook(route.onChange, route, 4))
-    return hooks
-  }, [])
-}
+    const transitionHook = (...args) => {
+      hook.apply(route, args)
 
-function runTransitionHooks(length, iter, callback) {
-  if (!length) {
-    callback()
-    return
-  }
-
-  let redirectInfo
-  function replace(location, deprecatedPathname, deprecatedQuery) {
-    if (deprecatedPathname) {
-      warning(
-        false,
-        '`replaceState(state, pathname, query) is deprecated; use `replace(location)` with a location descriptor instead. http://tiny.cc/router-isActivedeprecated'
-      )
-      redirectInfo = {
-        pathname: deprecatedPathname,
-        query: deprecatedQuery,
-        state: location
+      if (isSync) {
+        let callback = args[args.length - 1]
+        // Assume hook executes synchronously and
+        // automatically call the callback.
+        callback()
       }
+    }
 
+    pendingHooks.add(transitionHook)
+
+    return transitionHook
+  }
+
+  function getEnterHooks(routes) {
+    return routes.reduce(function (hooks, route) {
+      if (route.onEnter)
+        hooks.push(createTransitionHook(route.onEnter, route, 3, enterHooks))
+      return hooks
+    }, [])
+  }
+
+  function getChangeHooks(routes) {
+    return routes.reduce(function (hooks, route) {
+      if (route.onChange)
+        hooks.push(createTransitionHook(route.onChange, route, 4, changeHooks))
+      return hooks
+    }, [])
+  }
+
+  function runTransitionHooks(length, iter, callback) {
+    if (!length) {
+      callback()
       return
     }
 
-    redirectInfo = location
+    let redirectInfo
+    function replace(location) {
+      redirectInfo = location
+    }
+
+    loopAsync(length, function (index, next, done) {
+      iter(index, replace, function (error) {
+        if (error || redirectInfo) {
+          done(error, redirectInfo) // No need to continue.
+        } else {
+          next()
+        }
+      })
+    }, callback)
   }
 
-  loopAsync(length, function (index, next, done) {
-    iter(index, replace, function (error) {
-      if (error || redirectInfo) {
-        done(error, redirectInfo) // No need to continue.
-      } else {
-        next()
+  /**
+   * Runs all onEnter hooks in the given array of routes in order
+   * with onEnter(nextState, replace, callback) and calls
+   * callback(error, redirectInfo) when finished. The first hook
+   * to use replace short-circuits the loop.
+   *
+   * If a hook needs to run asynchronously, it may use the callback
+   * function. However, doing so will cause the transition to pause,
+   * which could lead to a non-responsive UI if the hook is slow.
+   */
+  function runEnterHooks(routes, nextState, callback) {
+    enterHooks.clear()
+    const hooks = getEnterHooks(routes)
+    return runTransitionHooks(hooks.length, (index, replace, next) => {
+      const wrappedNext = (...args) => {
+        if (enterHooks.has(hooks[index])) {
+          next(...args)
+          enterHooks.remove(hooks[index])
+        }
       }
-    })
-  }, callback)
-}
+      hooks[index](nextState, replace, wrappedNext)
+    }, callback)
+  }
 
-/**
- * Runs all onEnter hooks in the given array of routes in order
- * with onEnter(nextState, replace, callback) and calls
- * callback(error, redirectInfo) when finished. The first hook
- * to use replace short-circuits the loop.
- *
- * If a hook needs to run asynchronously, it may use the callback
- * function. However, doing so will cause the transition to pause,
- * which could lead to a non-responsive UI if the hook is slow.
- */
-export function runEnterHooks(routes, nextState, callback) {
-  const hooks = getEnterHooks(routes)
-  return runTransitionHooks(hooks.length, (index, replace, next) => {
-    hooks[index](nextState, replace, next)
-  }, callback)
-}
+  /**
+   * Runs all onChange hooks in the given array of routes in order
+   * with onChange(prevState, nextState, replace, callback) and calls
+   * callback(error, redirectInfo) when finished. The first hook
+   * to use replace short-circuits the loop.
+   *
+   * If a hook needs to run asynchronously, it may use the callback
+   * function. However, doing so will cause the transition to pause,
+   * which could lead to a non-responsive UI if the hook is slow.
+   */
+  function runChangeHooks(routes, state, nextState, callback) {
+    changeHooks.clear()
+    const hooks = getChangeHooks(routes)
+    return runTransitionHooks(hooks.length, (index, replace, next) => {
+      const wrappedNext = (...args) => {
+        if (changeHooks.has(hooks[index])) {
+          next(...args)
+          changeHooks.remove(hooks[index])
+        }
+      }
+      hooks[index](state, nextState, replace, wrappedNext)
+    }, callback)
+  }
 
-/**
- * Runs all onChange hooks in the given array of routes in order
- * with onChange(prevState, nextState, replace, callback) and calls
- * callback(error, redirectInfo) when finished. The first hook
- * to use replace short-circuits the loop.
- *
- * If a hook needs to run asynchronously, it may use the callback
- * function. However, doing so will cause the transition to pause,
- * which could lead to a non-responsive UI if the hook is slow.
- */
-export function runChangeHooks(routes, state, nextState, callback) {
-  const hooks = getChangeHooks(routes)
-  return runTransitionHooks(hooks.length, (index, replace, next) => {
-    hooks[index](state, nextState, replace, next)
-  }, callback)
-}
+  /**
+   * Runs all onLeave hooks in the given array of routes in order.
+   */
+  function runLeaveHooks(routes, prevState) {
+    for (let i = 0, len = routes.length; i < len; ++i)
+      if (routes[i].onLeave)
+        routes[i].onLeave.call(routes[i], prevState)
+  }
 
-/**
- * Runs all onLeave hooks in the given array of routes in order.
- */
-export function runLeaveHooks(routes, prevState) {
-  for (let i = 0, len = routes.length; i < len; ++i)
-    if (routes[i].onLeave)
-      routes[i].onLeave.call(routes[i], prevState)
+  return {
+    runEnterHooks,
+    runChangeHooks,
+    runLeaveHooks
+  }
 }
