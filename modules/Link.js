@@ -4,6 +4,7 @@ import { bool, object, string, func, oneOfType } from 'prop-types'
 import invariant from 'invariant'
 import { routerShape } from './PropTypes'
 import { ContextSubscriber } from './ContextUtils'
+import { component } from './InternalPropTypes'
 
 function isLeftClickEvent(event) {
   return event.button === 0
@@ -103,10 +104,10 @@ const Link = createReactClass({
       // If user does not specify a `to` prop, return an empty anchor tag.
       if (to == null) { return <Component {...props}/> }
 
-      const location = createLocationDescriptor(to, { query, hash, state })
-
-      if (Component == 'a'){
-        props.href = router.createHref(location)
+      const toLocation = resolveToLocation(to, router)
+      
+      if (Component == 'a') {
+        props.href = router.createHref(toLocation)
       }
 
       if (activeClassName || (activeStyle != null && !isEmptyObject(activeStyle))) {
